@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <vector>
+#include <random>
 
 struct NexusFrame
 {
@@ -7,7 +9,7 @@ struct NexusFrame
 };
 
 
-NexusFrame prepareNexusFrame(uint8_t id, bool battery, uint8_t channel, int16_t temperature, uint8_t humidity)
+NexusFrame prepareNexusFrame(uint8_t id, bool battery, uint8_t channel, float temperature, uint8_t humidity)
 {
   NexusFrame nf;
   nf.hi = (id & 0xF0) >> 4;
@@ -22,8 +24,12 @@ NexusFrame prepareNexusFrame(uint8_t id, bool battery, uint8_t channel, int16_t 
   l <<= 2;   //2 bit channel
   l |= channel & 3;    
 
+  int16_t ft = round(temperature * 10.0f);  
+  if (temperature < 0)
+    ft = ~(-ft);
+
   l <<= 12;  //12 it temperature
-  l |= temperature & 0x3FF;    
+  l |= ft & 0xFFF;    
 
   l <<= 4;
   l |= 0xF;  // 0b1111 field
@@ -101,13 +107,45 @@ void setup()
 
 bool led = false;
 
+struct NexusSensorId
+{
+  NexusSensorId(uint8_t id, uint8_t channel, 
+    float t = 10.0f, float h = 50.0f): 
+      id(id), channel(channel), temperature(t), humidity(h)
+  {
+
+  }
+
+  uint8_t id;
+  uint8_t channel;
+  float temperature;
+  float humidity;
+};
+
+static std::vector<NexusSensorId> spoofedSensors = {
+  {0xA8, 0, 25.0f, 50.0f}, 
+  {0x1B, 1, 10.0f, 30.0f},
+  {0xBB, 2, -10.0f, 30.0f}, 
+};
+
+std::random_device rd{};
+std::mt19937 gen{rd()};
+std::normal_distribution<float> d(0, 0.4);
 
 void loop() {
-  const auto nf = prepareNexusFrame(75, 1, 1, ~100, 95);
-  printNexusFrame(nf);
-  playNexusFrame(nf, 5);  
+  for (auto& sensor: spoofedSensors)
+  {    
+    sensor.temperature += d(gen);
+    sensor.humidity += d(gen);
   
-  delay(1000);
+    printf("%2X/%d: T: %.1f H: %.1f\n", sensor.id, sensor.channel, sensor.temperature, sensor.humidity);
+
+    const auto nf = prepareNexusFrame(sensor.id, 1, sensor.channel, sensor.temperature, sensor.humidity);
+    printNexusFrame(nf);
+    playNexusFrame(nf, 5);  
+  }
+  
+  delay(5000);
   digitalWrite(2, led);
   led = !led;
 }
